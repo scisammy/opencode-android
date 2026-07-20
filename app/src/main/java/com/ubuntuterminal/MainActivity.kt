@@ -153,7 +153,6 @@ class MainActivity : AppCompatActivity() {
     private fun prootCmd(): List<String> {
         val p = prootFile ?: error("proot not set up")
         val pf = p.absolutePath
-        val lf = loaderFile?.absolutePath ?: ""
         return if (rootfsDir.exists()) {
             listOf("/system/bin/linker64", pf,
                 "-r", rootfsDir.absolutePath,
@@ -163,7 +162,7 @@ class MainActivity : AppCompatActivity() {
                 "-b", "/system",
                 "-b", "/data",
                 "-w", "/root",
-                "/system/bin/sh", "-c")
+                "/bin/sh", "-c")
         } else {
             listOf("/system/bin/linker64", pf, "/system/bin/sh", "-c")
         }
@@ -172,9 +171,12 @@ class MainActivity : AppCompatActivity() {
     private fun prootEnv(): Map<String, String> {
         val m = mutableMapOf("PROOT_LOADER" to (loaderFile?.absolutePath ?: ""))
         if (rootfsDir.exists()) {
+            val tmpDir = File(filesDir, "tmp")
+            tmpDir.mkdirs()
             m["HOME"] = "/root"
             m["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
             m["TERM"] = "xterm-256color"
+            m["PROOT_TMP_DIR"] = tmpDir.absolutePath
         }
         return m
     }
