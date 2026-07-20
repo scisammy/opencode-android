@@ -8,17 +8,18 @@ import android.view.inputmethod.EditorInfo
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var output: TextView
+    private lateinit var scroll: ScrollView
     private lateinit var input: EditText
-    private val log = StringBuilder()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val scroll = ScrollView(this)
+        scroll = ScrollView(this)
         output = TextView(this)
         output.textSize = 12f
         output.typeface = android.graphics.Typeface.MONOSPACE
@@ -65,10 +66,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun append(text: String) {
-        log.append(text).append("\n")
         runOnUiThread {
-            output.text = log.toString()
-            (output.parent as? ScrollView)?.fullScroll(android.view.View.FOCUS_DOWN)
+            output.append("$text\n")
+            scroll.post { scroll.fullScroll(android.view.View.FOCUS_DOWN) }
         }
     }
 
@@ -79,41 +79,49 @@ class MainActivity : AppCompatActivity() {
                 append("Arch: $abi")
                 append("Files dir: ${filesDir.absolutePath}")
 
-                // Find binaries from jniLibs (nativeLibraryDir is NOT under /data/data tmpfs → executable)
+                // Try native lib dir first (Android ≤11 extracts .so files here)
                 val libDir = applicationInfo.nativeLibraryDir
-                val prootFile = File(libDir, "libproot.so")
-                val loaderFile = File(libDir, "libproot-loader.so")
+                var prootFile = File(libDir, "libproot.so")
+                var loaderFile = File(libDir, "libproot-loader.so")
                 append("Native lib dir: $libDir")
-                append("proot: ${prootFile.length()} bytes, exists=${prootFile.exists()}, canExec=${prootFile.canExecute()}")
-                append("loader: ${loaderFile.length()} bytes, exists=${loaderFile.exists()}, canExec=${loaderFile.canExecute()}")
+                append("proot: ${prootFile.length()} bytes, exists=${prootFile.exists()}")
 
-                // Also check filesDir fallback
-                val prootFallback = File(filesDir, "proot")
-                append("filesDir/proot: exists=${prootFallback.exists()}, canExec=${prootFallback.canExecute()}")
+                if (!prootFile.exists()) {
+                    // Native libs not extracted — use assets fallback + linker64
+                    append("jniLibs not extracted on this Android version — falling back to assets")
+
+                    prootFile = File(filesDir, "proot")
+                    loaderFile = File(filesDir, "loader")
+
+                    if (!prootFile.exists()) {
+                        assets.open("proot_$abi").use { i -> FileOutputStream(prootFile).use { i.copyTo(it) } }
+                        prootFile.setExecutable(true)
+                    }
+                    if (!loaderFile.exists()) {
+                        assets.open("loader_$abi").use { i -> FileOutputStream(loaderFile).use { i.copyTo(it) } }
+                        loaderFile.setExecutable(true)
+                    }
+
+                    // Use linker64 to bypass noexec on /data/data
+                    append("Running proot via linker64 (bypasses noexec)")
+                    runTest("/system/bin/linker64", prootFile.absolutePath, "--version")
+                    runTest(mapOf("PROOT_LOADER" to loaderFile.absolutePath),
+                        "/system/bin/linker64", prootFile.absolutePath, "--version")
+                } else {
+                    // Native libs are present — direct exec should work
+                    append("loader: ${loaderFile.length()} bytes, exists=${loaderFile.exists()}")
+                    runTest(prootFile.absolutePath, "--version")
+                    runTest(mapOf("PROOT_LOADER" to loaderFile.absolutePath),
+                        prootFile.absolutePath, "--version")
+                    runTest("/system/bin/linker64", prootFile.absolutePath, "--version")
+                }
 
                 append("")
-                append("--- Testing binaries ---")
-
-                // Direct exec from native lib dir (should work — not under noexec tmpfs)
-                runTest(prootFile.absolutePath, "--version")
-                // With PROOT_LOADER set
-                runTest(mapOf("PROOT_LOADER" to loaderFile.absolutePath), prootFile.absolutePath, "--version")
-                // Via linker64 (always works)
-                runTest("/system/bin/linker64", prootFile.absolutePath, "--version")
-                // Shell and utilities
                 runTest("/system/bin/sh", "-c", "echo shell works")
                 runTest("/system/bin/tar", "--version")
 
-                // Check mount info
                 append("")
-                append("--- Mount info ---")
                 runTest("/system/bin/cat", "/proc/self/mountinfo")
-
-                // Check where native lib dir sits (is it on a noexec mount?)
-                append("")
-                append("--- Native lib mount ---")
-                runTest("/system/bin/df", libDir)
-                runTest("/system/bin/mount")
 
                 append("")
                 append("Ready. Type a command to run it.")
@@ -147,7 +155,6 @@ class MainActivity : AppCompatActivity() {
             append("> ${cmd.joinToString(" ")}")
             append("  FAILED: $e")
         }
-        append("")
     }
 
     private fun runCmd() {
