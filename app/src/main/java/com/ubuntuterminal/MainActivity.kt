@@ -146,16 +146,9 @@ class MainActivity : AppCompatActivity() {
                     p.waitFor()
                     assetsTmp.delete()
 
-                    // Make binaries executable
-                    supportDir.listFiles()?.forEach { f ->
-                        if (f.isFile && (f.name.startsWith("proot") || f.name == "loader" || f.name == "busybox")) {
-                            f.setExecutable(true)
-                        }
-                    }
-                    // Also check subdirectories
-                    File(supportDir, "common").listFiles()?.forEach { f ->
-                        if (f.isFile) f.setExecutable(true)
-                    }
+                    // Make all files executable recursively
+                    ProcessBuilder("/system/bin/find", supportDir.absolutePath, "-type", "f", "-exec", "chmod", "755", "{}", "+")
+                        .start().waitFor()
                     append("  extracted support files")
                 }
 
