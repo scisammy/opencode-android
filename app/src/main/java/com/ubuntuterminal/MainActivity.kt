@@ -205,7 +205,7 @@ class MainActivity : AppCompatActivity() {
                     "x86" -> "i386"
                     else -> "arm64"
                 }
-                val url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04-base-$arch.tar.gz"
+                val url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-$arch.tar.gz"
                 append("Downloading Ubuntu rootfs...")
                 append("  $url")
 
