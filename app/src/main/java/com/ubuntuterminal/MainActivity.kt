@@ -205,8 +205,18 @@ class MainActivity : AppCompatActivity() {
                     "x86" -> "i386"
                     else -> "arm64"
                 }
-                val url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-$arch.tar.gz"
-                append("Downloading Ubuntu rootfs...")
+
+                append("Finding latest Ubuntu rootfs...")
+                val indexUrl = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/"
+                val indexHtml = URL(indexUrl).readText()
+
+                val pattern = Regex("ubuntu-base-24\\.04\\.(\\d+)-base-$arch\\.tar\\.gz")
+                val versions = pattern.findAll(indexHtml).map { it.groupValues[1].toInt() }.distinct().sorted()
+                if (versions.isEmpty()) throw Exception("No Ubuntu rootfs found for $arch at $indexUrl")
+
+                val latest = versions.last()
+                val url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.$latest-base-$arch.tar.gz"
+                append("Downloading Ubuntu 24.04.$latest rootfs...")
                 append("  $url")
 
                 val tmp = File(filesDir, "rootfs.tar.gz")
