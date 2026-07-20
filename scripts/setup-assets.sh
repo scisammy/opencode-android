@@ -1,53 +1,67 @@
 #!/bin/bash
 set -e
-BASE="$(cd "$(dirname "$0")/.." && pwd)"  # project root
-ASSETS="${1:-$BASE/app/src/main/assets}"
-mkdir -p "$ASSETS"
+BASE="$(cd "$(dirname "$0")/.." && pwd)"
 
-# ABI mapping: arch → assets suffix → jniLibs dir
+# ABI mapping: zip suffix → assets suffix → jniLibs dir
 declare -A ABI_MAP
-ABI_MAP[aarch64]="arm64:arm64-v8a"
-ABI_MAP[armv7a]="arm:armeabi-v7a"
+ABI_MAP[arm64-v8a]="arm64:arm64-v8a"
+ABI_MAP[armeabi-v7a]="arm:armeabi-v7a"
 ABI_MAP[x86_64]="x86_64:x86_64"
-ABI_MAP[i686]="x86:x86"
+ABI_MAP[x86]="x86:x86"
 
-download_and_extract() {
-    local arch="$1"
-    local mapping="${ABI_MAP[$arch]}"
-    local abi_suffix="${mapping%%:*}"        # arm64, arm, x86_64, x86
-    local jni_abi="${mapping##*:}"           # arm64-v8a, armeabi-v7a, x86_64, x86
-    local url="https://github.com/green-green-avk/build-proot-android/raw/master/packages/proot-android-${arch}.tar.gz"
+download_userland_assets() {
+    local zip_suffix="$1"       # arm64-v8a, armeabi-v7a, x86_64, x86
+    local mapping="${ABI_MAP[$zip_suffix]}"
+    local abi_suffix="${mapping%%:*}"   # arm64, arm, x86_64, x86
+    local jni_abi="${mapping##*:}"      # arm64-v8a, armeabi-v7a, x86_64, x86
 
+    local ASSETS="$BASE/app/src/main/assets"
     local JNIDIR="$BASE/app/src/main/jniLibs/$jni_abi"
-    mkdir -p "$JNIDIR" "$ASSETS"
+    mkdir -p "$ASSETS" "$JNIDIR"
 
-    echo "Downloading proot (${arch})..."
-    curl -sL "$url" | tar xz -C /tmp/proot-tmp
+    local url="https://github.com/CypherpunkArmory/UserLAnd-Assets-Support/releases/download/v1.5.1/${zip_suffix}-assets.zip"
+    echo "Downloading UserLAnd assets ($zip_suffix)..."
+    curl -sL "$url" -o /tmp/userland-assets.zip
+
+    # Extract proot + loader (use .a10 variant for Android 10+)
+    python3 -c "
+import zipfile
+z = zipfile.ZipFile('/tmp/userland-assets.zip')
+z.extract('proot.a10', '/tmp/userland-extract')
+z.extract('loader.a10', '/tmp/userland-extract')
+" 2>/dev/null || python -c "
+import zipfile
+z = zipfile.ZipFile('/tmp/userland-assets.zip')
+z.extract('proot.a10', '/tmp/userland-extract')
+z.extract('loader.a10', '/tmp/userland-extract')
+"
 
     # → assets (proot_<suffix>, loader_<suffix>)
-    cp "/tmp/proot-tmp/root/bin/proot" "$ASSETS/proot_${abi_suffix}"
-    cp "/tmp/proot-tmp/root/libexec/proot/loader" "$ASSETS/loader_${abi_suffix}"
+    cp "/tmp/userland-extract/proot.a10" "$ASSETS/proot_${abi_suffix}"
+    cp "/tmp/userland-extract/loader.a10" "$ASSETS/loader_${abi_suffix}"
 
-    # → jniLibs/<abi>/ (lib<name>.so)
-    cp "/tmp/proot-tmp/root/bin/proot" "$JNIDIR/libproot.so"
-    cp "/tmp/proot-tmp/root/libexec/proot/loader" "$JNIDIR/libproot-loader.so"
+    # → jniLibs/<abi>/ (lib<name>.so for direct exec)
+    cp "/tmp/userland-extract/proot.a10" "$JNIDIR/libproot.so"
+    cp "/tmp/userland-extract/loader.a10" "$JNIDIR/libproot-loader.so"
 
     chmod 755 "$ASSETS/proot_${abi_suffix}" "$ASSETS/loader_${abi_suffix}" \
              "$JNIDIR/libproot.so" "$JNIDIR/libproot-loader.so"
 
-    rm -rf /tmp/proot-tmp/root
+    rm -rf /tmp/userland-assets.zip /tmp/userland-extract
     echo "  -> assets: proot_${abi_suffix}, loader_${abi_suffix}"
     echo "  -> jniLibs/$jni_abi: libproot.so, libproot-loader.so"
 }
 
-rm -rf /tmp/proot-tmp && mkdir /tmp/proot-tmp
-download_and_extract aarch64
-download_and_extract armv7a
-download_and_extract x86_64
-download_and_extract i686
+rm -rf /tmp/userland-extract && mkdir -p /tmp/userland-extract
+
+download_userland_assets arm64-v8a
+download_userland_assets armeabi-v7a
+download_userland_assets x86_64
+download_userland_assets x86
+
 echo ""
 echo "=== Assets ==="
-ls -la "$ASSETS"/{proot_*,loader_*}
+ls -la "$BASE/app/src/main/assets/"{proot_*,loader_*}
 echo ""
 echo "=== jniLibs ==="
 find "$BASE/app/src/main/jniLibs" -type f -ls
