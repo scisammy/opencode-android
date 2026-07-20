@@ -20,8 +20,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dlBtn: Button
     private lateinit var prootBtn: Button
 
-    private var prootFile: File? = null
-    private var loaderFile: File? = null
+    private val supportDir: File get() = File(filesDir, "support")
     private val rootfsDir: File get() = File(filesDir, "rootfs")
     private var inProot = false
 
@@ -51,7 +50,7 @@ class MainActivity : AppCompatActivity() {
         dlBtn = Button(this)
         dlBtn.text = "DL Rootfs"
         dlBtn.isEnabled = false
-        dlBtn.setOnClickListener { downloadRootfs() }
+        dlBtn.setOnClickListener { downloadAll() }
 
         prootBtn = Button(this)
         prootBtn.text = "Proot OFF"
@@ -87,7 +86,7 @@ class MainActivity : AppCompatActivity() {
     private fun append(text: String) {
         runOnUiThread {
             output.append("$text\n")
-            scroll.post { scroll.fullScroll(android.view.View.FOCUS_DOWN) }
+            scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
         }
     }
 
@@ -98,37 +97,25 @@ class MainActivity : AppCompatActivity() {
                 append("Arch: $abi")
                 append("Files dir: ${filesDir.absolutePath}")
 
-                val libDir = applicationInfo.nativeLibraryDir
-                var pFile = File(libDir, "libproot.so")
-                var lFile = File(libDir, "libproot-loader.so")
+                val busybox = File(supportDir, "busybox")
+                val proot = File(supportDir, "proot")
+                val loader = File(supportDir, "loader")
+                val execScript = File(supportDir, "execInProot.sh")
 
-                if (!pFile.exists()) {
-                    append("jniLibs not extracted — falling back to assets")
+                if (busybox.exists() && proot.exists() && loader.exists() && execScript.exists()) {
+                    append("Support files: OK")
+                    runOnUiThread { dlBtn.isEnabled = true }
 
-                    pFile = File(filesDir, "proot")
-                    lFile = File(filesDir, "loader")
-
-                    if (!pFile.exists()) {
-                        assets.open("proot_$abi").use { i -> FileOutputStream(pFile).use { i.copyTo(it) } }
-                        pFile.setExecutable(true)
+                    if (rootfsDir.exists() && File(rootfsDir, "bin/sh").exists()) {
+                        append("Rootfs: OK")
+                        runOnUiThread { prootBtn.isEnabled = true }
+                    } else {
+                        append("Rootfs: not found — tap DL Rootfs")
                     }
-                    if (!lFile.exists()) {
-                        assets.open("loader_$abi").use { i -> FileOutputStream(lFile).use { i.copyTo(it) } }
-                        lFile.setExecutable(true)
-                    }
-
-                    append("proot via linker64: " + runTestSimple("/system/bin/linker64", pFile.absolutePath, "--version"))
                 } else {
-                    append("proot via direct exec: " + runTestSimple(pFile.absolutePath, "--version"))
+                    append("Support files: missing — tap DL Rootfs to install")
+                    runOnUiThread { dlBtn.isEnabled = true }
                 }
-
-                prootFile = pFile
-                loaderFile = lFile
-
-                append("")
-                append("Ready. Type a command, or tap DL Rootfs to download Ubuntu.")
-
-                runOnUiThread { dlBtn.isEnabled = true }
             } catch (e: Exception) {
                 append("SETUP ERROR: $e")
                 Log.e("UbuntuTerminal", "setup", e)
@@ -136,120 +123,75 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun runTestSimple(vararg cmd: String): String {
-        return try {
-            val pb = ProcessBuilder(*cmd)
-                .directory(filesDir)
-            pb.environment()["LD_LIBRARY_PATH"] = applicationInfo.nativeLibraryDir
-            val p = pb.start()
-            val out = p.inputStream.bufferedReader().readText().trim()
-            val err = p.errorStream.bufferedReader().readText().trim()
-            val code = p.waitFor()
-            "exit=$code out=${out.take(80)} err=${err.take(80)}"
-        } catch (e: Exception) {
-            "FAILED: ${e.message}"
-        }
-    }
-
-    private fun prootCmd(): List<String> {
-        val p = prootFile ?: error("proot not set up")
-        val pf = p.absolutePath
-        return if (rootfsDir.exists()) {
-            listOf("/system/bin/linker64", pf,
-                "--link2symlink",
-                "-0",
-                "-r", rootfsDir.absolutePath,
-                "-b", "/dev",
-                "-b", "/proc",
-                "-b", "/sys",
-                "-b", "/tmp",
-                "-b", "/system",
-                "-b", "/data",
-                "-w", "/root",
-                "/usr/bin/env", "-i",
-                "HOME=/root",
-                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                "TERM=xterm-256color",
-                "/bin/bash", "-c")
-        } else {
-            listOf("/system/bin/linker64", pf, "/system/bin/sh", "-c")
-        }
-    }
-
-    private fun prootEnv(): Map<String, String> {
-        val libDir = applicationInfo.nativeLibraryDir
-        val m = mutableMapOf(
-            "PROOT_LOADER" to (loaderFile?.absolutePath ?: ""),
-            "PROOT_LOADER_32" to (loaderFile?.absolutePath ?: ""),
-            "PROOT_NO_SECCOMP" to "1",
-            "LD_LIBRARY_PATH" to libDir
-        )
-        if (rootfsDir.exists()) {
-            val tmpDir = File(filesDir, "tmp")
-            tmpDir.mkdirs()
-            m["PROOT_TMP_DIR"] = tmpDir.absolutePath
-        }
-        return m
-    }
-
-    private fun downloadRootfs() {
+    private fun downloadAll() {
         dlBtn.isEnabled = false
         dlBtn.text = "DL..."
         Thread {
             try {
                 val abi = getAbi()
-                val arch = when (abi) {
-                    "arm64" -> "arm64"
-                    "arm" -> "armhf"
-                    "x86_64" -> "amd64"
-                    "x86" -> "i386"
-                    else -> "arm64"
+                val baseUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12"
+
+                // Download assets (proot, loader, busybox, scripts)
+                if (!File(supportDir, "busybox").exists()) {
+                    append("Downloading support assets...")
+                    val assetsUrl = "$baseUrl/$abi-assets.tar.gz"
+                    append("  $assetsUrl")
+                    val assetsTmp = File(filesDir, "assets.tar.gz")
+                    URL(assetsUrl).openStream().use { input -> FileOutputStream(assetsTmp).use { input.copyTo(it) } }
+                    append("  downloaded ${assetsTmp.length()} bytes")
+
+                    supportDir.mkdirs()
+                    val p = ProcessBuilder("/system/bin/tar", "xf", assetsTmp.absolutePath, "-C", supportDir.absolutePath)
+                        .start()
+                    p.waitFor()
+                    assetsTmp.delete()
+
+                    // Make binaries executable
+                    supportDir.listFiles()?.forEach { f ->
+                        if (f.isFile && (f.name.startsWith("proot") || f.name == "loader" || f.name == "busybox")) {
+                            f.setExecutable(true)
+                        }
+                    }
+                    // Also check subdirectories
+                    File(supportDir, "common").listFiles()?.forEach { f ->
+                        if (f.isFile) f.setExecutable(true)
+                    }
+                    append("  extracted support files")
                 }
 
-                append("Finding latest Ubuntu rootfs...")
-                val indexUrl = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/"
-                val indexHtml = URL(indexUrl).readText()
+                // Download rootfs
+                if (!File(rootfsDir, "bin/sh").exists()) {
+                    append("Downloading Ubuntu rootfs...")
+                    val rootfsUrl = "$baseUrl/$abi-rootfs.tar.gz"
+                    append("  $rootfsUrl")
+                    val rootfsTmp = File(filesDir, "rootfs.tar.gz")
+                    URL(rootfsUrl).openStream().use { input -> FileOutputStream(rootfsTmp).use { input.copyTo(it) } }
+                    append("  downloaded ${rootfsTmp.length()} bytes")
 
-                val pattern = Regex("ubuntu-base-24\\.04\\.(\\d+)-base-$arch\\.tar\\.gz")
-                val versions = pattern.findAll(indexHtml).map { it.groupValues[1].toInt() }.distinct().sorted()
-                if (versions.isEmpty()) throw Exception("No Ubuntu rootfs found for $arch at $indexUrl")
+                    append("  extracting rootfs (this may take a while)...")
+                    rootfsDir.mkdirs()
+                    val p = ProcessBuilder("/system/bin/tar", "xf", rootfsTmp.absolutePath, "-C", rootfsDir.absolutePath)
+                        .start()
+                    val code = p.waitFor()
+                    val err = p.errorStream.bufferedReader().readText().trim()
+                    rootfsTmp.delete()
 
-                val latest = versions.last()
-                val url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.$latest-base-$arch.tar.gz"
-                append("Downloading Ubuntu 24.04.$latest rootfs...")
-                append("  $url")
-
-                val tmp = File(filesDir, "rootfs.tar.gz")
-                URL(url).openStream().use { input -> FileOutputStream(tmp).use { input.copyTo(it) } }
-                append("  downloaded ${tmp.length()} bytes")
-
-                val rdir = rootfsDir
-                if (rdir.exists()) rdir.deleteRecursively()
-                rdir.mkdir()
-
-                append("  extracting...")
-                val p = ProcessBuilder("/system/bin/tar", "xf", tmp.absolutePath, "-C", rdir.absolutePath)
-                    .directory(filesDir)
-                    .start()
-                val code = p.waitFor()
-                val err = p.errorStream.bufferedReader().readText().trim()
-                tmp.delete()
-
-                val hasEssential = File(rdir, "bin/sh").exists() && File(rdir, "usr/bin").exists()
-                if (!hasEssential) {
-                    append("  extract FAILED: $err")
-                    return@Thread
+                    if (File(rootfsDir, "bin/sh").exists()) {
+                        append("  rootfs extracted OK")
+                    } else if (code != 0) {
+                        append("  extract FAILED: $err")
+                        runOnUiThread { dlBtn.isEnabled = true; dlBtn.text = "DL Rootfs" }
+                        return@Thread
+                    }
                 }
-                if (code != 0) append("  (tar warnings: hardlinks skipped — OK)")
 
-                append("  extracted OK — $(ls ${rdir.absolutePath} | head -5)")
-
-                val resolv = File(rdir, "etc/resolv.conf")
+                // Create resolv.conf
+                val resolv = File(rootfsDir, "etc/resolv.conf")
                 resolv.parentFile?.mkdirs()
                 resolv.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
-                append("  created /etc/resolv.conf")
 
-                append("Rootfs ready at ${rdir.absolutePath}")
+                append("")
+                append("Setup complete!")
 
                 runOnUiThread {
                     prootBtn.isEnabled = true
@@ -270,7 +212,7 @@ class MainActivity : AppCompatActivity() {
     private fun toggleProot() {
         inProot = !inProot
         prootBtn.text = if (inProot) "Proot ON" else "Proot OFF"
-        append(if (inProot) "Proot mode ON — commands run inside Ubuntu rootfs" else "Proot mode OFF")
+        append(if (inProot) "Proot mode ON — commands run inside Ubuntu" else "Proot mode OFF")
     }
 
     private fun runCmd() {
@@ -281,14 +223,22 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val pb: ProcessBuilder
-                if (inProot && rootfsDir.exists()) {
-                    val parts = prootCmd() + text
-                    pb = ProcessBuilder(parts)
-                    pb.environment().putAll(prootEnv())
+                if (inProot && rootfsDir.exists() && File(rootfsDir, "bin/sh").exists()) {
+                    val busybox = File(supportDir, "busybox")
+                    val execScript = File(supportDir, "execInProot.sh")
+                    val cmd = listOf(busybox.absolutePath, "sh", execScript.absolutePath) + text.split(" ")
+                    pb = ProcessBuilder(cmd)
+                    pb.directory(filesDir)
+                    val env = pb.environment()
+                    env["ROOT_PATH"] = filesDir.absolutePath
+                    env["ROOTFS_PATH"] = rootfsDir.absolutePath
+                    env["LIB_PATH"] = supportDir.absolutePath
+                    env["PROOT_DEBUG_LEVEL"] = "-1"
+                    env["LD_LIBRARY_PATH"] = applicationInfo.nativeLibraryDir
                 } else {
                     pb = ProcessBuilder("/system/bin/sh", "-c", text)
+                    pb.directory(filesDir)
                 }
-                pb.directory(filesDir)
                 val p = pb.start()
                 val out = p.inputStream.bufferedReader().readText().trim()
                 val err = p.errorStream.bufferedReader().readText().trim()
