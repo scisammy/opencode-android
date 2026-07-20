@@ -126,7 +126,7 @@ class MainActivity : AppCompatActivity() {
                 loaderFile = lFile
 
                 append("")
-                append("Ready. Type a command, or tap DL Rootfs to download Alpine.")
+                append("Ready. Type a command, or tap DL Rootfs to download Ubuntu.")
 
                 runOnUiThread { dlBtn.isEnabled = true }
             } catch (e: Exception) {
@@ -162,6 +162,7 @@ class MainActivity : AppCompatActivity() {
                 "-b", "/dev",
                 "-b", "/proc",
                 "-b", "/sys",
+                "-b", "/tmp",
                 "-b", "/system",
                 "-b", "/data",
                 "-w", "/root",
@@ -169,7 +170,7 @@ class MainActivity : AppCompatActivity() {
                 "HOME=/root",
                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 "TERM=xterm-256color",
-                "/bin/sh", "-c")
+                "/bin/bash", "-c")
         } else {
             listOf("/system/bin/linker64", pf, "/system/bin/sh", "-c")
         }
@@ -204,7 +205,7 @@ class MainActivity : AppCompatActivity() {
                     "x86" -> "i386"
                     else -> "arm64"
                 }
-                val url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.2-base-$arch.tar.gz"
+                val url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04-base-$arch.tar.gz"
                 append("Downloading Ubuntu rootfs...")
                 append("  $url")
 
@@ -230,6 +231,12 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 append("  extracted OK — $(ls ${rdir.absolutePath} | head -5)")
+
+                val resolv = File(rdir, "etc/resolv.conf")
+                resolv.parentFile?.mkdirs()
+                resolv.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+                append("  created /etc/resolv.conf")
+
                 append("Rootfs ready at ${rdir.absolutePath}")
 
                 runOnUiThread {
@@ -251,7 +258,7 @@ class MainActivity : AppCompatActivity() {
     private fun toggleProot() {
         inProot = !inProot
         prootBtn.text = if (inProot) "Proot ON" else "Proot OFF"
-        append(if (inProot) "Proot mode ON — commands run inside Alpine rootfs" else "Proot mode OFF")
+        append(if (inProot) "Proot mode ON — commands run inside Ubuntu rootfs" else "Proot mode OFF")
     }
 
     private fun runCmd() {
