@@ -175,9 +175,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun prootEnv(): Map<String, String> {
+        val libDir = applicationInfo.nativeLibraryDir
         val m = mutableMapOf(
             "PROOT_LOADER" to (loaderFile?.absolutePath ?: ""),
-            "PROOT_NO_SECCOMP" to "1"
+            "PROOT_LOADER_32" to (loaderFile?.absolutePath ?: ""),
+            "PROOT_NO_SECCOMP" to "1",
+            "LD_LIBRARY_PATH" to libDir
         )
         if (rootfsDir.exists()) {
             val tmpDir = File(filesDir, "tmp")
