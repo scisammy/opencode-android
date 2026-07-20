@@ -169,7 +169,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun prootEnv(): Map<String, String> {
-        val m = mutableMapOf("PROOT_LOADER" to (loaderFile?.absolutePath ?: ""))
+        val m = mutableMapOf(
+            "PROOT_LOADER" to (loaderFile?.absolutePath ?: ""),
+            "PROOT_NO_SECCOMP" to "1"
+        )
         if (rootfsDir.exists()) {
             val tmpDir = File(filesDir, "tmp")
             tmpDir.mkdirs()
