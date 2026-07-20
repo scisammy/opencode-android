@@ -155,6 +155,8 @@ class MainActivity : AppCompatActivity() {
         val pf = p.absolutePath
         return if (rootfsDir.exists()) {
             listOf("/system/bin/linker64", pf,
+                "--link2symlink",
+                "-0",
                 "-r", rootfsDir.absolutePath,
                 "-b", "/dev",
                 "-b", "/proc",
@@ -162,6 +164,10 @@ class MainActivity : AppCompatActivity() {
                 "-b", "/system",
                 "-b", "/data",
                 "-w", "/root",
+                "/usr/bin/env", "-i",
+                "HOME=/root",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "TERM=xterm-256color",
                 "/bin/sh", "-c")
         } else {
             listOf("/system/bin/linker64", pf, "/system/bin/sh", "-c")
@@ -176,9 +182,6 @@ class MainActivity : AppCompatActivity() {
         if (rootfsDir.exists()) {
             val tmpDir = File(filesDir, "tmp")
             tmpDir.mkdirs()
-            m["HOME"] = "/root"
-            m["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-            m["TERM"] = "xterm-256color"
             m["PROOT_TMP_DIR"] = tmpDir.absolutePath
         }
         return m
