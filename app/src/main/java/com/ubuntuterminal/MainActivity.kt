@@ -198,14 +198,14 @@ class MainActivity : AppCompatActivity() {
             try {
                 val abi = getAbi()
                 val arch = when (abi) {
-                    "arm64" -> "aarch64"
-                    "arm" -> "armv7"
-                    "x86_64" -> "x86_64"
-                    "x86" -> "x86"
-                    else -> "aarch64"
+                    "arm64" -> "arm64"
+                    "arm" -> "armhf"
+                    "x86_64" -> "amd64"
+                    "x86" -> "i386"
+                    else -> "arm64"
                 }
-                val url = "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/$arch/alpine-minirootfs-3.19.1-$arch.tar.gz"
-                append("Downloading Alpine rootfs...")
+                val url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.2-base-$arch.tar.gz"
+                append("Downloading Ubuntu rootfs...")
                 append("  $url")
 
                 val tmp = File(filesDir, "rootfs.tar.gz")
