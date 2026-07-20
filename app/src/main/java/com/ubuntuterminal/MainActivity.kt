@@ -138,9 +138,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun runTestSimple(vararg cmd: String): String {
         return try {
-            val p = ProcessBuilder(*cmd)
+            val pb = ProcessBuilder(*cmd)
                 .directory(filesDir)
-                .start()
+            pb.environment()["LD_LIBRARY_PATH"] = applicationInfo.nativeLibraryDir
+            val p = pb.start()
             val out = p.inputStream.bufferedReader().readText().trim()
             val err = p.errorStream.bufferedReader().readText().trim()
             val code = p.waitFor()
