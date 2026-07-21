@@ -143,17 +143,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun chmodUsable(dir: File, name: String) {
-        try {
-            val pb = ProcessBuilder("chmod", "0777", name)
-            pb.directory(dir)
-            pb.start().waitFor()
-        } catch (_: Exception) {}
-    }
-
     private fun chmodRecursive(dir: File) {
         dir.listFiles()?.forEach { f ->
-            if (f.isDirectory) chmodRecursive(f) else chmodUsable(dir, f.name)
+            if (f.isDirectory) {
+                chmodRecursive(f)
+            } else {
+                f.setExecutable(true, false)
+                f.setReadable(true, false)
+            }
         }
     }
 
