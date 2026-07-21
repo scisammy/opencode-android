@@ -2,7 +2,6 @@ package com.ubuntuterminal
 
 import android.os.Bundle
 import android.os.Build
-import android.system.Os
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
@@ -91,53 +90,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // === Replicate UlaFiles methods ===
+    private fun chmodUsable(dir: File, name: String) {
+        try {
+            val pb = ProcessBuilder("chmod", "0777", name)
+            pb.directory(dir)
+            pb.start().waitFor()
+        } catch (_: Exception) {}
+    }
 
-    private fun setupLinks() {
-        // Replicate UlaFiles.setupLinks() exactly
-        supportDir.mkdirs()
-        val libDir = applicationInfo.nativeLibraryDir
-        libDir.listFiles()?.forEach { libFile ->
-            var libFileName = libFile.name
-            if (libFileName.startsWith("lib_proot.") ||
-                libFileName.startsWith("lib_libtalloc") ||
-                libFileName.startsWith("lib_loader")) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    if (libFileName.endsWith(".a10.so")) {
-                        libFileName = libFileName.replace(".a10.so", ".so")
-                    } else {
-                        return@forEach
-                    }
-                } else {
-                    if (libFileName.endsWith(".a10.so")) {
-                        return@forEach
-                    }
-                }
-            }
-            if (!libFileName.startsWith("lib_")) return@forEach
-            val name = libFileName.removePrefix("lib_").removeSuffix(".so")
-            val linkFile = File(supportDir, name)
-            linkFile.delete()
-            try {
-                Os.symlink(libFile.absolutePath, linkFile.absolutePath)
-            } catch (e: Exception) {
-                libFile.copyTo(linkFile, overwrite = true)
-                makePermissionsUsable(supportDir.absolutePath, name)
-            }
+    private fun chmodRecursive(dir: File) {
+        dir.listFiles()?.forEach { f ->
+            if (f.isDirectory) chmodRecursive(f) else chmodUsable(dir, f.name)
         }
     }
-
-    private fun makePermissionsUsable(containingDirectoryPath: String, filename: String) {
-        // Replicate UlaFiles.makePermissionsUsable() exactly
-        val containingDirectory = File(containingDirectoryPath)
-        containingDirectory.mkdirs()
-        val pb = ProcessBuilder("chmod", "0777", filename)
-        pb.directory(containingDirectory)
-        val process = pb.start()
-        process.waitFor()
-    }
-
-    // === Core logic ===
 
     private fun doSetup() {
         Thread {
@@ -145,8 +110,6 @@ class MainActivity : AppCompatActivity() {
                 val abi = getAbi()
                 append("Arch: $abi")
                 append("Files dir: ${filesDir.absolutePath}")
-
-                setupLinks()
 
                 val busybox = File(supportDir, "busybox")
                 val proot = File(supportDir, "proot")
@@ -180,13 +143,12 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val abi = getAbi()
-                val supportAbi = abi // arm64-v8a for UserLAnd-Assets-Support
-                val distroArch = abi.removeSuffix("-v8a") // arm64 for UserLAnd-Assets-Ubuntu
+                val distroArch = abi.removeSuffix("-v8a")
 
                 // 1. Download support assets from UserLAnd-Assets-Support
                 if (!File(supportDir, "busybox").exists()) {
                     append("Downloading support assets...")
-                    val url = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Support/releases/download/v1.5.1/$supportAbi-assets.zip"
+                    val url = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Support/releases/download/v1.5.1/$abi-assets.zip"
                     val tmp = File(filesDir, "support-assets.zip")
                     URL(url).openStream().use { inp -> FileOutputStream(tmp).use { inp.copyTo(it) } }
                     append("  downloaded ${tmp.length()} bytes")
@@ -195,18 +157,8 @@ class MainActivity : AppCompatActivity() {
                     ProcessBuilder("/system/bin/unzip", "-o", tmp.absolutePath, "-d", supportDir.absolutePath)
                         .start().waitFor()
                     tmp.delete()
-
-                    // Fix execInProot.sh shebang for our package
+                    chmodRecursive(supportDir)
                     fixShebang()
-
-                    // Make binaries executable using UserLAnd's approach
-                    supportDir.listFiles()?.forEach { f ->
-                        if (f.isFile) makePermissionsUsable(supportDir.absolutePath, f.name)
-                    }
-
-                    // Create symlinks from jniLibs (like UlaFiles.setupLinks)
-                    setupLinks()
-
                     append("  extracted support files")
                 }
 
@@ -221,36 +173,8 @@ class MainActivity : AppCompatActivity() {
                     ProcessBuilder("/system/bin/tar", "xf", tmp.absolutePath, "-C", supportDir.absolutePath)
                         .start().waitFor()
                     tmp.delete()
-
+                    chmodRecursive(supportDir)
                     fixShebang()
-
-                    supportDir.listFiles()?.forEach { f ->
-                        if (f.isFile) makePermissionsUsable(supportDir.absolutePath, f.name)
-                    }
-
-                    // Copy distro scripts into support/common/ (referenced by extractFilesystem.sh)
-                    val commonDir = File(supportDir, "common")
-                    commonDir.mkdirs()
-                    listOf("addNonRootUser.sh", "busybox_static", "extractFilesystem.sh",
-                        "compressFilesystem.sh").forEach { name ->
-                        val src = File(supportDir, name)
-                        val dst = File(commonDir, name)
-                        if (src.exists()) {
-                            src.copyTo(dst, overwrite = true)
-                            makePermissionsUsable(commonDir.absolutePath, name)
-                        }
-                    }
-
-                    // Copy support files into filesystemDir/support/ (bind-mounted as /support in proot)
-                    val rootfsSupport = File(filesystemDir, "support")
-                    rootfsSupport.mkdirs()
-                    supportDir.listFiles()?.forEach { f ->
-                        if (f.isFile) {
-                            f.copyTo(File(rootfsSupport, f.name), overwrite = true)
-                            makePermissionsUsable(rootfsSupport.absolutePath, f.name)
-                        }
-                    }
-
                     append("  extracted Ubuntu assets")
                 }
 
@@ -285,24 +209,6 @@ class MainActivity : AppCompatActivity() {
 
                     if (File(rootfsDir, "bin/sh").exists()) {
                         append("  rootfs extracted OK")
-
-                        // Copy support scripts into rootfs/support/ for extraction
-                        val rootfsSupport = File(filesystemDir, "rootfs/support")
-                        rootfsSupport.mkdirs()
-                        supportDir.listFiles()?.forEach { f ->
-                            if (f.isFile) {
-                                f.copyTo(File(rootfsSupport, f.name), overwrite = true)
-                                makePermissionsUsable(rootfsSupport.absolutePath, f.name)
-                            }
-                        }
-                        val rootfsCommon = File(rootfsSupport, "common")
-                        File(supportDir, "common").copyRecursively(rootfsCommon, overwrite = true)
-                        rootfsCommon.listFiles()?.forEach { f ->
-                            if (f.isFile) makePermissionsUsable(rootfsCommon.absolutePath, f.name)
-                        }
-
-                        // Create extraction success marker
-                        File(rootfsSupport, ".success_filesystem_extraction").createNewFile()
                         rootfsTarball.delete()
                     } else {
                         append("  rootfs extraction failed")
@@ -343,7 +249,7 @@ class MainActivity : AppCompatActivity() {
     private fun toggleProot() {
         inProot = !inProot
         prootBtn.text = if (inProot) "Proot ON" else "Proot OFF"
-        append(if (inProot) "Proot mode ON — commands run inside Ubuntu" else "Proot mode OFF")
+        append(if (inProot) "Proot mode ON \u2014 commands run inside Ubuntu" else "Proot mode OFF")
     }
 
     private fun runCmd() {
