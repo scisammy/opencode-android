@@ -134,7 +134,7 @@ class MainActivity : AppCompatActivity() {
                 // 1. Download support assets (proot, loader, busybox, scripts) from UserLAnd-Assets-Support
                 if (!File(supportDir, "busybox").exists()) {
                     append("Downloading support assets...")
-                    val supportUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Support/releases/download/v1.5.1/${abi}-v8a-assets.zip"
+                    val supportUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Support/releases/download/v1.5.1/$abi-assets.zip"
                     val supportTmp = File(filesDir, "support-assets.zip")
                     URL(supportUrl).openStream().use { input -> FileOutputStream(supportTmp).use { input.copyTo(it) } }
                     append("  downloaded ${supportTmp.length()} bytes")
