@@ -10,6 +10,8 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.net.HttpURLConnection
 import java.net.URL
 
 class MainActivity : AppCompatActivity() {
@@ -90,6 +92,57 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun downloadFile(url: String, dest: File, label: String = "") {
+        var input: InputStream? = null
+        try {
+            var connection = URL(url).openConnection() as HttpURLConnection
+            connection.connectTimeout = 30000
+            connection.readTimeout = 60000
+            connection.setRequestProperty("User-Agent", "UbuntuTerminal/1.0")
+
+            var redirectCount = 0
+            while (true) {
+                val code = connection.responseCode
+                if (code in 301..308) {
+                    val location = connection.getHeaderField("Location") ?: break
+                    connection.disconnect()
+                    connection = URL(location).openConnection() as HttpURLConnection
+                    connection.connectTimeout = 30000
+                    connection.readTimeout = 60000
+                    connection.setRequestProperty("User-Agent", "UbuntuTerminal/1.0")
+                    redirectCount++
+                    if (redirectCount > 10) break
+                    continue
+                }
+                connection.connect()
+                val total = connection.contentLength.toLong()
+                input = connection.inputStream
+                FileOutputStream(dest).use { out ->
+                    val buf = ByteArray(8192)
+                    var read: Int
+                    var downloaded = 0L
+                    while (input.read(buf).also { read = it } != -1) {
+                        out.write(buf, 0, read)
+                        downloaded += read
+                        if (label.isNotEmpty() && downloaded % (1024 * 256) < 8192) {
+                            val pct = if (total > 0) " (${downloaded * 100 / total}%)" else ""
+                            val mb = downloaded / (1024 * 1024)
+                            val tb = if (total > 0) total / (1024 * 1024) else 0
+                            if (total > 0) {
+                                append("  $label $mb/$tb MB$pct")
+                            } else {
+                                append("  $label $mb MB")
+                            }
+                        }
+                    }
+                }
+                break
+            }
+        } finally {
+            input?.close()
+        }
+    }
+
     private fun chmodUsable(dir: File, name: String) {
         try {
             val pb = ProcessBuilder("chmod", "0777", name)
@@ -150,7 +203,7 @@ class MainActivity : AppCompatActivity() {
                     append("Downloading support assets...")
                     val url = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Support/releases/download/v1.5.1/$abi-assets.zip"
                     val tmp = File(filesDir, "support-assets.zip")
-                    URL(url).openStream().use { inp -> FileOutputStream(tmp).use { inp.copyTo(it) } }
+                    downloadFile(url, tmp, "Support")
                     append("  downloaded ${tmp.length()} bytes")
 
                     supportDir.mkdirs()
@@ -167,7 +220,7 @@ class MainActivity : AppCompatActivity() {
                     append("Downloading Ubuntu assets...")
                     val url = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12/$distroArch-assets.tar.gz"
                     val tmp = File(filesDir, "ubuntu-assets.tar.gz")
-                    URL(url).openStream().use { inp -> FileOutputStream(tmp).use { inp.copyTo(it) } }
+                    downloadFile(url, tmp, "Ubuntu assets")
                     append("  downloaded ${tmp.length()} bytes")
 
                     ProcessBuilder("/system/bin/tar", "xf", tmp.absolutePath, "-C", supportDir.absolutePath)
@@ -185,7 +238,7 @@ class MainActivity : AppCompatActivity() {
                     append("Downloading Ubuntu rootfs...")
                     val url = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12/$distroArch-rootfs.tar.gz"
                     append("  $url")
-                    URL(url).openStream().use { inp -> FileOutputStream(rootfsTarball).use { inp.copyTo(it) } }
+                    downloadFile(url, rootfsTarball, "Rootfs")
                     append("  downloaded ${rootfsTarball.length()} bytes")
                 }
 
