@@ -385,7 +385,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getAbi(): String {
-        val abi = Build.CPU_ABI?.lowercase() ?: Build.SUPPORTED_ABIS.firstOrNull()?.lowercase() ?: "arm64-v8a"
+        val abi = Build.SUPPORTED_ABIS.firstOrNull()?.lowercase() ?: "arm64-v8a"
         return when {
             abi.contains("arm64") -> "arm64-v8a"
             abi.contains("armeabi") -> "armeabi-v7a"
