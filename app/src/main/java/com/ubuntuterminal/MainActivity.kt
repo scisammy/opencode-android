@@ -98,14 +98,10 @@ class MainActivity : AppCompatActivity() {
                 append("Arch: $abi")
                 append("Files dir: ${filesDir.absolutePath}")
 
-                // Setup symlinks from jniLibs to support/ (like UlaFiles.setupLinks)
-                setupLinks()
-
                 val busybox = File(supportDir, "busybox")
                 val proot = File(supportDir, "proot")
                 val loader = File(supportDir, "loader")
                 val execScript = File(supportDir, "execInProot.sh")
-                val rootfsTarball = File(filesystemDir, "rootfs.tar.gz")
 
                 if (busybox.exists() && proot.exists() && loader.exists() && execScript.exists()) {
                     append("Support files: OK")
@@ -114,9 +110,6 @@ class MainActivity : AppCompatActivity() {
                     if (File(filesystemDir, "rootfs/bin/sh").exists()) {
                         append("Rootfs: extracted")
                         runOnUiThread { prootBtn.isEnabled = true }
-                    } else if (rootfsTarball.exists()) {
-                        append("Rootfs: tarball found, extracting...")
-                        extractRootfs()
                     } else {
                         append("Rootfs: not found — tap DL Rootfs")
                     }
@@ -131,53 +124,36 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun setupLinks() {
-        // Replicate UlaFiles.setupLinks — symlink jniLibs/lib_*.so to support/
-        supportDir.mkdirs()
-        val libDir = applicationInfo.nativeLibraryDir
-        libDir.listFiles()?.forEach { libFile ->
-            val name = libFile.name
-            if (name.startsWith("lib_")) {
-                val supportName = name.removePrefix("lib_").removeSuffix(".so")
-                    .removeSuffix(".a10")
-                val linkFile = File(supportDir, supportName)
-                linkFile.delete()
-                try {
-                    Os.symlink(libFile.absolutePath, linkFile.absolutePath)
-                } catch (e: Exception) {
-                    // Fallback: copy if symlink fails
-                    libFile.copyTo(linkFile, overwrite = true)
-                    linkFile.setExecutable(true)
-                }
-            }
-        }
-    }
-
     private fun downloadAll() {
         dlBtn.isEnabled = false
         dlBtn.text = "DL..."
         Thread {
             try {
                 val abi = getAbi()
-                val baseUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12"
 
-                // 1. Download assets (proot, loader, busybox, scripts)
+                // 1. Download support assets (proot, loader, busybox, scripts) from UserLAnd-Assets-Support
                 if (!File(supportDir, "busybox").exists()) {
                     append("Downloading support assets...")
-                    val assetsUrl = "$baseUrl/$abi-assets.tar.gz"
-                    append("  $assetsUrl")
-                    val assetsTmp = File(filesDir, "assets.tar.gz")
-                    URL(assetsUrl).openStream().use { input -> FileOutputStream(assetsTmp).use { input.copyTo(it) } }
-                    append("  downloaded ${assetsTmp.length()} bytes")
+                    val supportUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Support/releases/download/v1.5.1/${abi}-v8a-assets.zip"
+                    val supportTmp = File(filesDir, "support-assets.zip")
+                    URL(supportUrl).openStream().use { input -> FileOutputStream(supportTmp).use { input.copyTo(it) } }
+                    append("  downloaded ${supportTmp.length()} bytes")
 
                     supportDir.mkdirs()
-                    val p = ProcessBuilder("/system/bin/tar", "xf", assetsTmp.absolutePath, "-C", supportDir.absolutePath)
+                    val p = ProcessBuilder("/system/bin/unzip", "-o", supportTmp.absolutePath, "-d", supportDir.absolutePath)
                         .start()
                     p.waitFor()
-                    assetsTmp.delete()
+                    supportTmp.delete()
 
-                    // Create symlinks from jniLibs
-                    setupLinks()
+                    // Fix execInProot.sh shebang for our package
+                    val execScript = File(supportDir, "execInProot.sh")
+                    if (execScript.exists()) {
+                        val content = execScript.readText()
+                        execScript.writeText(content.replace(
+                            "#!/data/data/tech.ula/files/support/busybox",
+                            "#!${supportDir.absolutePath}/busybox"
+                        ))
+                    }
 
                     // Make all support files executable
                     ProcessBuilder("chmod", "-R", "755", supportDir.absolutePath)
@@ -186,21 +162,111 @@ class MainActivity : AppCompatActivity() {
                     append("  extracted support files")
                 }
 
-                // 2. Download rootfs tarball (don't extract yet — extract inside proot)
+                // 2. Download Ubuntu assets (distro-specific scripts) from UserLAnd-Assets-Ubuntu
+                val ubuntuScripts = File(supportDir, "userland_profile.sh")
+                if (!ubuntuScripts.exists()) {
+                    append("Downloading Ubuntu assets...")
+                    val ubuntuUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12/$abi-assets.tar.gz"
+                    val ubuntuTmp = File(filesDir, "ubuntu-assets.tar.gz")
+                    URL(ubuntuUrl).openStream().use { input -> FileOutputStream(ubuntuTmp).use { input.copyTo(it) } }
+                    append("  downloaded ${ubuntuTmp.length()} bytes")
+
+                    val p = ProcessBuilder("/system/bin/tar", "xf", ubuntuTmp.absolutePath, "-C", supportDir.absolutePath)
+                        .start()
+                    p.waitFor()
+                    ubuntuTmp.delete()
+
+                    // Re-fix shebang after overlay
+                    val execScript = File(supportDir, "execInProot.sh")
+                    if (execScript.exists()) {
+                        val content = execScript.readText()
+                        if (content.contains("tech.ula")) {
+                            execScript.writeText(content.replace(
+                                "#!/data/data/tech.ula/files/support/busybox",
+                                "#!${supportDir.absolutePath}/busybox"
+                            ))
+                        }
+                    }
+
+                    ProcessBuilder("chmod", "-R", "755", supportDir.absolutePath)
+                        .start().waitFor()
+                    append("  extracted Ubuntu assets")
+                }
+
+                // 3. Setup directory structure matching UserLAnd layout
+                // UlaFiles copies assets into filesystemDir/support/ (inside rootfs dir)
+                val rootfsSupport = File(filesystemDir, "support")
+                rootfsSupport.mkdirs()
+                val commonDir = File(supportDir, "common")
+                commonDir.mkdirs()
+
+                // Copy scripts that extractFilesystem.sh references into support/common/
+                listOf("addNonRootUser.sh", "busybox_static", "extractFilesystem.sh",
+                    "compressFilesystem.sh", "deleteFilesystem.sh").forEach { name ->
+                    val src = File(supportDir, name)
+                    val dst = File(commonDir, name)
+                    if (src.exists()) {
+                        src.copyTo(dst, overwrite = true)
+                        dst.setExecutable(true)
+                    }
+                }
+
+                // Copy support scripts into rootfs/support/ (bind-mounted as /support inside proot)
+                supportDir.listFiles()?.forEach { f ->
+                    if (f.isFile) {
+                        f.copyTo(File(rootfsSupport, f.name), overwrite = true)
+                    }
+                }
+                // Also copy common/ subdirectory
+                val rootfsCommon = File(rootfsSupport, "common")
+                commonDir.copyRecursively(rootfsCommon, overwrite = true)
+                rootfsCommon.listFiles()?.forEach { it.setExecutable(true) }
+
+                // 4. Download rootfs tarball
                 filesystemDir.mkdirs()
                 val rootfsTarball = File(filesystemDir, "rootfs.tar.gz")
                 if (!File(filesystemDir, "rootfs/bin/sh").exists() && !rootfsTarball.exists()) {
                     append("Downloading Ubuntu rootfs...")
-                    val rootfsUrl = "$baseUrl/$abi-rootfs.tar.gz"
+                    val rootfsUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12/$abi-rootfs.tar.gz"
                     append("  $rootfsUrl")
                     URL(rootfsUrl).openStream().use { input -> FileOutputStream(rootfsTarball).use { input.copyTo(it) } }
                     append("  downloaded ${rootfsTarball.length()} bytes")
                 }
 
-                // 3. Extract rootfs inside proot
+                // 5. Extract rootfs on host (Android tar handles it, hardlinks will be skipped)
                 if (!File(filesystemDir, "rootfs/bin/sh").exists() && rootfsTarball.exists()) {
-                    append("Extracting rootfs inside proot...")
-                    extractRootfs()
+                    append("Extracting rootfs...")
+                    filesystemDir.mkdirs()
+                    val rootfsDir = File(filesystemDir, "rootfs")
+                    rootfsDir.mkdirs()
+
+                    val p = ProcessBuilder("/system/bin/tar", "xf", rootfsTarball.absolutePath,
+                        "--exclude", "sys", "--exclude", "dev", "--exclude", "proc",
+                        "--exclude", "support", "--exclude", "mnt",
+                        "-C", rootfsDir.absolutePath)
+                        .start()
+                    val code = p.waitFor()
+                    val err = p.errorStream.bufferedReader().readText().trim()
+
+                    // Create resolv.conf
+                    val resolv = File(rootfsDir, "etc/resolv.conf")
+                    resolv.parentFile?.mkdirs()
+                    resolv.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+
+                    // Create tmp dir for proot
+                    File(rootfsDir, "tmp").mkdirs()
+
+                    if (File(rootfsDir, "bin/sh").exists()) {
+                        append("  rootfs extracted OK")
+                        // Run post-extraction setup inside proot (addNonRootUser, etc.)
+                        rootfsSupport.mkdirs()
+                        File(rootfsSupport, ".success_filesystem_extraction").createNewFile()
+                        rootfsTarball.delete()
+                    } else if (code != 0) {
+                        append("  extract FAILED: $err")
+                        runOnUiThread { dlBtn.isEnabled = true; dlBtn.text = "DL Rootfs" }
+                        return@Thread
+                    }
                 }
 
                 append("")
@@ -221,73 +287,6 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun extractRootfs() {
-        // Create support dirs inside rootfs for proot extraction
-        val rootfsSupport = File(filesystemDir, "rootfs/support")
-        rootfsSupport.mkdirs()
-        val tmpDir = File(filesystemDir, "rootfs/tmp")
-        tmpDir.mkdirs()
-
-        // Copy support scripts into rootfs/support for extraction
-        val extractScript = File(supportDir, "extractFilesystem.sh")
-        val addUserScript = File(supportDir, "addNonRootUser.sh")
-        val busyboxStatic = File(supportDir, "busybox_static")
-
-        if (extractScript.exists()) {
-            extractScript.copyTo(File(rootfsSupport, "extractFilesystem.sh"), overwrite = true)
-        }
-        if (addUserScript.exists()) {
-            addUserScript.copyTo(File(rootfsSupport, "addNonRootUser.sh"), overwrite = true)
-        }
-        if (busyboxStatic.exists()) {
-            busyboxStatic.copyTo(File(rootfsSupport, "busybox_static"), overwrite = true)
-            File(rootfsSupport, "busybox_static").setExecutable(true)
-        }
-
-        // Run extractFilesystem.sh inside proot
-        val result = executeProotCommand("/support/extractFilesystem.sh")
-        if (result) {
-            append("  rootfs extracted OK")
-            // Delete tarball to save space
-            File(filesystemDir, "rootfs.tar.gz").delete()
-        } else {
-            append("  rootfs extraction failed")
-        }
-    }
-
-    private fun executeProotCommand(command: String): Boolean {
-        val busybox = File(supportDir, "busybox")
-        val execScript = File(supportDir, "execInProot.sh")
-
-        val cmd = listOf(
-            busybox.absolutePath,
-            "sh",
-            execScript.absolutePath
-        ) + command.split(" ")
-
-        val pb = ProcessBuilder(cmd)
-        pb.directory(filesDir)
-        pb.redirectErrorStream(true)
-
-        val env = pb.environment()
-        env["ROOT_PATH"] = filesDir.absolutePath
-        env["ROOTFS_PATH"] = filesystemDir.absolutePath
-        env["LIB_PATH"] = supportDir.absolutePath
-        env["PROOT_DEBUG_LEVEL"] = "-1"
-        env["LD_LIBRARY_PATH"] = supportDir.absolutePath
-
-        return try {
-            val process = pb.start()
-            val output = process.inputStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
-            if (output.isNotEmpty()) append(output)
-            exitCode == 0
-        } catch (e: Exception) {
-            append("ERROR: $e")
-            false
-        }
-    }
-
     private fun toggleProot() {
         inProot = !inProot
         prootBtn.text = if (inProot) "Proot ON" else "Proot OFF"
@@ -305,6 +304,7 @@ class MainActivity : AppCompatActivity() {
                 if (inProot && File(filesystemDir, "rootfs/bin/sh").exists()) {
                     val busybox = File(supportDir, "busybox")
                     val execScript = File(supportDir, "execInProot.sh")
+
                     val cmd = listOf(
                         busybox.absolutePath,
                         "sh",
@@ -339,11 +339,11 @@ class MainActivity : AppCompatActivity() {
     private fun getAbi(): String {
         val abi = Build.CPU_ABI?.lowercase() ?: Build.SUPPORTED_ABIS.firstOrNull()?.lowercase() ?: "arm64-v8a"
         return when {
-            abi.contains("arm64") -> "arm64"
-            abi.contains("armeabi") -> "arm"
+            abi.contains("arm64") -> "arm64-v8a"
+            abi.contains("armeabi") -> "armeabi-v7a"
             abi.contains("x86_64") -> "x86_64"
             abi.contains("x86") -> "x86"
-            else -> "arm64"
+            else -> "arm64-v8a"
         }
     }
 }
