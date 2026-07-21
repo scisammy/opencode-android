@@ -166,7 +166,8 @@ class MainActivity : AppCompatActivity() {
                 val ubuntuScripts = File(supportDir, "userland_profile.sh")
                 if (!ubuntuScripts.exists()) {
                     append("Downloading Ubuntu assets...")
-                    val ubuntuUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12/$abi-assets.tar.gz"
+                    val ubuntuArch = abi.removeSuffix("-v8a") // arm64-v8a -> arm64
+                    val ubuntuUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12/$ubuntuArch-assets.tar.gz"
                     val ubuntuTmp = File(filesDir, "ubuntu-assets.tar.gz")
                     URL(ubuntuUrl).openStream().use { input -> FileOutputStream(ubuntuTmp).use { input.copyTo(it) } }
                     append("  downloaded ${ubuntuTmp.length()} bytes")
@@ -227,7 +228,8 @@ class MainActivity : AppCompatActivity() {
                 val rootfsTarball = File(filesystemDir, "rootfs.tar.gz")
                 if (!File(filesystemDir, "rootfs/bin/sh").exists() && !rootfsTarball.exists()) {
                     append("Downloading Ubuntu rootfs...")
-                    val rootfsUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12/$abi-rootfs.tar.gz"
+                    val ubuntuArch = abi.removeSuffix("-v8a")
+                    val rootfsUrl = "https://github.com/CypherpunkArmory/UserLAnd-Assets-Ubuntu/releases/download/v0.0.12/$ubuntuArch-rootfs.tar.gz"
                     append("  $rootfsUrl")
                     URL(rootfsUrl).openStream().use { input -> FileOutputStream(rootfsTarball).use { input.copyTo(it) } }
                     append("  downloaded ${rootfsTarball.length()} bytes")
