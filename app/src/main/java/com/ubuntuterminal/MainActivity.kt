@@ -156,8 +156,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     // Make all support files executable
-                    ProcessBuilder("chmod", "-R", "755", supportDir.absolutePath)
-                        .start().waitFor()
+                    setExecutableRecursive(supportDir)
 
                     append("  extracted support files")
                 }
@@ -189,8 +188,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    ProcessBuilder("chmod", "-R", "755", supportDir.absolutePath)
-                        .start().waitFor()
+                    setExecutableRecursive(supportDir)
                     append("  extracted Ubuntu assets")
                 }
 
@@ -336,6 +334,17 @@ class MainActivity : AppCompatActivity() {
                 append("ERROR: $e")
             }
         }.start()
+    }
+
+    private fun setExecutableRecursive(dir: File) {
+        dir.listFiles()?.forEach { f ->
+            if (f.isDirectory) {
+                setExecutableRecursive(f)
+            } else {
+                f.setExecutable(true, false)
+                f.setReadable(true, false)
+            }
+        }
     }
 
     private fun getAbi(): String {
